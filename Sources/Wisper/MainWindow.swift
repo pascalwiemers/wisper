@@ -152,6 +152,18 @@ private struct HistoryView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8, pinnedViews: []) {
+                        HStack {
+                            Spacer()
+                            Button {
+                                reload()
+                            } label: {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                                    .labelStyle(.titleAndIcon)
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(.top, 10)
                         ForEach(sections, id: \.title) { section in
                             Text(section.title)
                                 .font(.caption.weight(.semibold))
@@ -170,13 +182,6 @@ private struct HistoryView: View {
             }
         }
         .navigationTitle("History")
-        .toolbar {
-            Button {
-                reload()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-        }
         .onAppear { reload() }
     }
 

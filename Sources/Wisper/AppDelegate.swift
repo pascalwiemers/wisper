@@ -293,6 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.sizingOptions = []
             let window = NSWindow(contentViewController: controller)
             window.title = "Wisper"
+            // One toolbar style everywhere, so the top bar height can never
+            // jump when tabs swap.
+            window.toolbarStyle = .unifiedCompact
             window.setContentSize(NSSize(width: 760, height: 560))
             window.contentMinSize = NSSize(width: 640, height: 420)
             window.isReleasedWhenClosed = false
