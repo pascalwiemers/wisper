@@ -267,36 +267,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openMainWindow(tab: MainWindowView.Tab) {
-        let view = MainWindowView(
-            selectedTab: tab,
-            appState: appState,
-            rowsProvider: { [weak self] in self?.store?.allRows() ?? [] },
-            dictionary: dictionary,
-            commandStore: commandStore,
-            skillStore: skillStore,
-            deleteHistory: { [weak self] in self?.store?.deleteAll() },
-            analyzeStyle: { [weak self] sample in
-                await self?.transform(
-                    text: sample,
-                    instruction: """
-                    These are raw dictation transcripts from one speaker. Describe their speaking style: tone, sentence structure, recurring habits, filler patterns. Then give three short, concrete suggestions for clearer dictation. Address the speaker as "you". Under 200 words, plain prose.
-                    """
-                )
-            }
-        )
+        appState.selectedTab = tab
 
-        if let mainWindow {
-            mainWindow.contentViewController = NSHostingController(rootView: view)
-            mainWindow.makeKeyAndOrderFront(nil)
-        } else {
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        if mainWindow == nil {
+            let view = MainWindowView(
+                appState: appState,
+                rowsProvider: { [weak self] in self?.store?.allRows() ?? [] },
+                dictionary: dictionary,
+                commandStore: commandStore,
+                skillStore: skillStore,
+                deleteHistory: { [weak self] in self?.store?.deleteAll() },
+                analyzeStyle: { [weak self] sample in
+                    await self?.transform(
+                        text: sample,
+                        instruction: """
+                        These are raw dictation transcripts from one speaker. Describe their speaking style: tone, sentence structure, recurring habits, filler patterns. Then give three short, concrete suggestions for clearer dictation. Address the speaker as "you". Under 200 words, plain prose.
+                        """
+                    )
+                }
+            )
+            let controller = NSHostingController(rootView: view)
+            // The window's size belongs to the user: never let a tab's ideal
+            // size resize the window when the detail view swaps.
+            controller.sizingOptions = []
+            let window = NSWindow(contentViewController: controller)
             window.title = "Wisper"
-            window.setContentSize(NSSize(width: 640, height: 560))
+            window.setContentSize(NSSize(width: 760, height: 560))
             window.isReleasedWhenClosed = false
             window.center()
             mainWindow = window
-            window.makeKeyAndOrderFront(nil)
         }
+        mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

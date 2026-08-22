@@ -24,6 +24,7 @@ final class AppState: ObservableObject {
     @Published var bestTierStatus = ""
     @Published var qwenResidency = QwenResidency(rawValue: UserDefaults.standard.string(forKey: "qwenResidency") ?? "") ?? .resident
     @Published var qwenIdleMinutes = UserDefaults.standard.object(forKey: "qwenIdleMinutes") as? Int ?? 15
+    @Published var selectedTab: MainWindowView.Tab = .history
 }
 
 /// The app's main window: a native sidebar layout. The waveform mark is the
@@ -50,7 +51,6 @@ struct MainWindowView: View {
         }
     }
 
-    @State var selectedTab: Tab
     @ObservedObject var appState: AppState
     let rowsProvider: () -> [TranscriptStore.Row]
     let dictionary: PersonalDictionary
@@ -72,7 +72,7 @@ struct MainWindowView: View {
                 .padding(.top, 18)
                 .padding(.bottom, 10)
 
-                List(Tab.allCases, selection: $selectedTab) { tab in
+                List(Tab.allCases, selection: $appState.selectedTab) { tab in
                     Label(tab.rawValue, systemImage: tab.symbol)
                         .tag(tab)
                 }
@@ -94,14 +94,17 @@ struct MainWindowView: View {
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
         } detail: {
-            switch selectedTab {
-            case .history: HistoryView(rowsProvider: rowsProvider)
-            case .stats: StatsTab(rowsProvider: rowsProvider, analyzeStyle: analyzeStyle)
-            case .dictionary: DictionaryView(dictionary: dictionary)
-            case .commands: CommandsView(store: commandStore)
-            case .skills: SkillsView(store: skillStore)
-            case .settings: SettingsView(appState: appState, deleteHistory: deleteHistory)
+            Group {
+                switch appState.selectedTab {
+                case .history: HistoryView(rowsProvider: rowsProvider)
+                case .stats: StatsTab(rowsProvider: rowsProvider, analyzeStyle: analyzeStyle)
+                case .dictionary: DictionaryView(dictionary: dictionary)
+                case .commands: CommandsView(store: commandStore)
+                case .skills: SkillsView(store: skillStore)
+                case .settings: SettingsView(appState: appState, deleteHistory: deleteHistory)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 700, minHeight: 480)
     }
