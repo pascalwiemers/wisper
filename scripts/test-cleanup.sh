@@ -22,6 +22,9 @@ CASES=(
     # Trips Apple's guardrails ("cut out my arms" — ASR mishearing of "my ums");
     # must still come back filler-free via the regex fallback.
     "Um so this is a test if the pill is working. Um let's see if it can cut out my arms and uh my stuttering um maybe uh"
+    # Deliberate repetition is emphasis — both "for real"s must survive.
+    "I would like to be able to say for real, for real."
+    "it was very very slow no no no I mean like really really slow"
 )
 
 for c in "${CASES[@]}"; do

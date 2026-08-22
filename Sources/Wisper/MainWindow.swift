@@ -586,6 +586,7 @@ private struct SettingsView: View {
     @AppStorage("out.removeFillers") private var removeFillers = true
     @AppStorage("out.spokenFormatting") private var spokenFormatting = true
     @AppStorage("out.applyCorrections") private var applyCorrections = true
+    @AppStorage("out.editStrength") private var editStrength = EditStrength.standard.rawValue
     @State private var startAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -593,6 +594,15 @@ private struct SettingsView: View {
             Section("Dictation") {
                 Toggle("Clean up text with on-device AI", isOn: $cleanupEnabled)
                 Text("The full cleanup pass. Dictations under 4 words skip it for zero latency. The raw words are always kept in History.")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                Picker("Cleanup strength", selection: $editStrength) {
+                    Text("Light").tag(EditStrength.light.rawValue)
+                    Text("Standard").tag(EditStrength.standard.rawValue)
+                    Text("Heavy").tag(EditStrength.heavy.rawValue)
+                }
+                .pickerStyle(.segmented)
+                Text("How much the cleanup may change. Light: fillers and punctuation only — wording stays exactly as spoken. Standard: also collapses false starts and self-corrections. Heavy: additionally tightens rambling phrasing. Deliberate repetition (“for real, for real”) is kept at every strength.")
                     .font(.caption).foregroundStyle(.secondary)
 
                 Toggle("Prefer built-in microphone", isOn: $preferBuiltInMic)
