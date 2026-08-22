@@ -274,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             dictionary: dictionary,
             commandStore: commandStore,
             skillStore: skillStore,
+            deleteHistory: { [weak self] in self?.store?.deleteAll() },
             analyzeStyle: { [weak self] sample in
                 await self?.transform(
                     text: sample,
@@ -400,12 +401,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try recorder.start()
             recordingStartedAt = Date()
             setIcon(state: .recording)
-            indicator.showRecording()
+            indicator.showRecording(mode: mode)
             playTick(named: "Tink")
             installEscapeMonitors()
             startPartialTranscripts()
             maxDurationTimer = Timer.scheduledTimer(withTimeInterval: maximumRecordingSeconds, repeats: false) { [weak self] _ in
                 wlog("recording hit \(Int(self?.maximumRecordingSeconds ?? 0))s cap — finishing")
+                self?.indicator.showMessage("5-minute limit reached — transcribing what you said", for: 2.2)
                 self?.finishDictation()
             }
         } catch {
@@ -494,11 +496,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.indicator.showMessage(
                             delivery == .clipboard ? "Skill “\(skill.name)” copied — paste anywhere" : "Skill “\(skill.name)”"
                         )
-                        self.store?.save(
-                            raw: utterance, clean: nil, durationSeconds: duration,
-                            appBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-                            delivery: "skill", asrMs: asrMs
-                        )
+                        if UserDefaults.standard.object(forKey: "historyEnabled") as? Bool ?? true {
+                            self.store?.save(
+                                raw: utterance, clean: nil, durationSeconds: duration,
+                                appBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                                delivery: "skill", asrMs: asrMs
+                            )
+                        }
                     }
                     return
                 }
@@ -638,15 +642,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             indicator.hide()
         }
 
-        store?.save(
-            raw: raw,
-            clean: cleaned,
-            durationSeconds: duration,
-            appBundleID: targetApp,
-            delivery: delivery.rawValue,
-            asrMs: asrMs,
-            cleanupMs: cleanupMs
-        )
+        if UserDefaults.standard.object(forKey: "historyEnabled") as? Bool ?? true {
+            store?.save(
+                raw: raw,
+                clean: cleaned,
+                durationSeconds: duration,
+                appBundleID: targetApp,
+                delivery: delivery.rawValue,
+                asrMs: asrMs,
+                cleanupMs: cleanupMs
+            )
+        }
 
         // Lazy Qwen: the idle countdown starts after each dictation.
         scheduleQwenIdleUnload()

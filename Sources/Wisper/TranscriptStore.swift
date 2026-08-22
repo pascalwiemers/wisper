@@ -84,6 +84,12 @@ final class TranscriptStore {
         }
     }
 
+    /// Privacy: wipe the entire local history.
+    func deleteAll() {
+        sqlite3_exec(db, "DELETE FROM transcripts; VACUUM;", nil, nil, nil)
+        wlog("transcript history deleted by user")
+    }
+
     struct Row {
         let timestamp: Date
         let raw: String

@@ -22,6 +22,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$PRODUCTS/Wisper" "$APP/Contents/MacOS/Wisper"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Resource bundles (MLX metallib, FluidAudio resources, tokenizer data).
 # Bundle.module resolves against the main bundle's Resources directory.

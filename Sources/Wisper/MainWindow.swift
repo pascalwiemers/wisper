@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import ServiceManagement
 
 enum CleanupTier: String {
@@ -55,6 +56,7 @@ struct MainWindowView: View {
     let dictionary: PersonalDictionary
     let commandStore: CommandStore
     let skillStore: SkillStore
+    let deleteHistory: () -> Void
     let analyzeStyle: (String) async -> String?
 
     var body: some View {
@@ -98,7 +100,7 @@ struct MainWindowView: View {
             case .dictionary: DictionaryView(dictionary: dictionary)
             case .commands: CommandsView(store: commandStore)
             case .skills: SkillsView(store: skillStore)
-            case .settings: SettingsView(appState: appState)
+            case .settings: SettingsView(appState: appState, deleteHistory: deleteHistory)
             }
         }
         .frame(minWidth: 700, minHeight: 480)
@@ -720,6 +722,7 @@ private struct SkillsView: View {
 
 private struct SettingsView: View {
     @ObservedObject var appState: AppState
+    let deleteHistory: () -> Void
     @AppStorage("cleanupEnabled") private var cleanupEnabled = true
     @AppStorage("preferBuiltInMic") private var preferBuiltInMic = true
     @AppStorage("out.pasteAutomatically") private var pasteAutomatically = true
@@ -730,7 +733,11 @@ private struct SettingsView: View {
     @AppStorage("out.spokenFormatting") private var spokenFormatting = true
     @AppStorage("out.applyCorrections") private var applyCorrections = true
     @AppStorage("out.editStrength") private var editStrength = EditStrength.standard.rawValue
+    @AppStorage("historyEnabled") private var historyEnabled = true
     @State private var startAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var confirmDelete = false
+    @State private var micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    @State private var axTrusted = AXIsProcessTrusted()
 
     var body: some View {
         Form {
@@ -820,13 +827,68 @@ private struct SettingsView: View {
                     }
             }
 
+            Section("Permissions") {
+                permissionRow("Microphone", granted: micGranted,
+                              pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+                permissionRow("Accessibility (Fn key + pasting)", granted: axTrusted,
+                              pane: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            }
+
+            Section("Privacy") {
+                Toggle("Save transcript history", isOn: $historyEnabled)
+                Text("History powers the Stats tab and dictation recovery. It never leaves this Mac either way.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Delete All History…", role: .destructive) { confirmDelete = true }
+                    Button("Reveal Data Folder") {
+                        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                            .appendingPathComponent("Wisper")
+                        NSWorkspace.shared.activateFileViewerSelecting([dir])
+                    }
+                }
+                .confirmationDialog("Delete every saved transcript? This cannot be undone.", isPresented: $confirmDelete) {
+                    Button("Delete All History", role: .destructive) { deleteHistory() }
+                }
+            }
+
             Section("How to dictate") {
-                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. **Fn + Shift** = command mode (Commands tab). **Fn + Control** = paste a skill by name (Skills tab). If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
+                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. **Fn + Shift** = command mode (Commands tab). **Fn + Control** = paste a skill by name (Skills tab). Recordings cap at 5 minutes. If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
                     .font(.callout)
+            }
+
+            Section("About") {
+                HStack {
+                    WaveformMark().frame(width: 22, height: 16)
+                    Text("Wisper \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")")
+                    Spacer()
+                    Button("GitHub") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/pascalwiemers/wisper")!)
+                    }
+                    .buttonStyle(.link)
+                }
+                Text("Parakeet TDT v3 for speech, Apple Intelligence or Qwen 4B for cleanup — all on-device.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
+        .onAppear {
+            micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            axTrusted = AXIsProcessTrusted()
+        }
+    }
+
+    private func permissionRow(_ title: String, granted: Bool, pane: String) -> some View {
+        HStack {
+            Circle().fill(granted ? Color.green : Color.orange).frame(width: 8, height: 8)
+            Text(title)
+            Spacer()
+            if granted {
+                Text("Granted").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button("Open Settings…") { NSWorkspace.shared.open(URL(string: pane)!) }
+            }
+        }
     }
 
     private func toggleRow(_ title: String, _ binding: Binding<Bool>, _ subtitle: String) -> some View {

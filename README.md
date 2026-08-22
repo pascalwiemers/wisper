@@ -2,7 +2,15 @@
 
 Local, private push-to-talk dictation for macOS. Hold **Fn**, speak, release — your words are transcribed on-device (Parakeet TDT v3 on the Neural Engine) and pasted into whatever text field you're in. No text field focused? The text lands on your clipboard instead.
 
-See [PLAN.md](PLAN.md) for the full roadmap. Current state: **Phases 1–4 built** — core loop, on-device LLM cleanup (Apple Foundation Models), waveform pill + polish, and the Stats window.
+See [PLAN.md](PLAN.md) for the full roadmap. Current state: **1.0** — all core phases built.
+
+| Hold | What happens |
+|---|---|
+| **Fn** | Dictate: transcribed, cleaned, pasted. Live partial text in the pill. |
+| **Fn + Shift** | Command: transform the selected text ("make this more formal", "scratch that"). |
+| **Fn + Control** | Skill: say a skill's name to paste its full prompt (Skills tab, GitHub import). |
+
+Esc while holding cancels; recordings cap at 5 minutes. Cleanup engines: Apple Intelligence (Fast) or Qwen3-4B via MLX (Best), with an edit-strength dial (Light/Standard/Heavy) and per-feature Output toggles. Personal dictionary with auto-learned vocabulary and replacement rules. Local-only history with stats and style analysis.
 
 ## Build & run
 

@@ -17,15 +17,31 @@ final class IndicatorPanel {
 
     // MARK: - Public modes
 
-    func showRecording() {
+    func showRecording(mode: RecordingMode = .dictation) {
         hideWork?.cancel()
         label.isHidden = true
-        partialLabel.stringValue = ""
-        partialLabel.isHidden = true
         waveform.isHidden = false
         waveform.mode = .live
         recording = true
-        present(width: 148)
+        // Command and skill mode get their own bar color and badge so you
+        // always know which kind of hold this is.
+        switch mode {
+        case .dictation:
+            waveform.barColor = .white
+            partialLabel.stringValue = ""
+            partialLabel.isHidden = true
+            present(width: 148)
+        case .command:
+            waveform.barColor = NSColor.systemPurple.blended(withFraction: 0.35, of: .white) ?? .systemPurple
+            partialLabel.stringValue = "⌘ Command — say what to do with the selection"
+            partialLabel.isHidden = false
+            present(width: partialWidth)
+        case .skill:
+            waveform.barColor = NSColor.systemTeal.blended(withFraction: 0.35, of: .white) ?? .systemTeal
+            partialLabel.stringValue = "✦ Skill — say a skill's name"
+            partialLabel.isHidden = false
+            present(width: partialWidth)
+        }
         waveform.start()
     }
 
@@ -158,6 +174,7 @@ final class IndicatorPanel {
 final class WaveformView: NSView {
     enum Mode { case live, pulse }
     var mode: Mode = .live
+    var barColor: NSColor = .white
 
     private let barCount = 15
     private let barWidth: CGFloat = 3
@@ -223,7 +240,7 @@ final class WaveformView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let spacing = (bounds.width - CGFloat(barCount) * barWidth) / CGFloat(barCount - 1)
-        NSColor.white.withAlphaComponent(0.92).setFill()
+        barColor.withAlphaComponent(0.92).setFill()
         for i in 0..<barCount {
             let h = max(minBarHeight, min(heights[i], bounds.height))
             let rect = NSRect(
