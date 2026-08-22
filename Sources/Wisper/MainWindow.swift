@@ -32,6 +32,7 @@ struct MainWindowView: View {
         case history = "History"
         case stats = "Stats"
         case dictionary = "Dictionary"
+        case commands = "Commands"
         case settings = "Settings"
         var id: String { rawValue }
 
@@ -40,6 +41,7 @@ struct MainWindowView: View {
             case .history: "quote.bubble"
             case .stats: "chart.bar.xaxis"
             case .dictionary: "character.book.closed"
+            case .commands: "wand.and.stars"
             case .settings: "gearshape"
             }
         }
@@ -49,6 +51,8 @@ struct MainWindowView: View {
     @ObservedObject var appState: AppState
     let rowsProvider: () -> [TranscriptStore.Row]
     let dictionary: PersonalDictionary
+    let commandStore: CommandStore
+    let analyzeStyle: (String) async -> String?
 
     var body: some View {
         NavigationSplitView {
@@ -87,8 +91,9 @@ struct MainWindowView: View {
         } detail: {
             switch selectedTab {
             case .history: HistoryView(rowsProvider: rowsProvider)
-            case .stats: StatsTab(rowsProvider: rowsProvider)
+            case .stats: StatsTab(rowsProvider: rowsProvider, analyzeStyle: analyzeStyle)
             case .dictionary: DictionaryView(dictionary: dictionary)
+            case .commands: CommandsView(store: commandStore)
             case .settings: SettingsView(appState: appState)
             }
         }
@@ -264,12 +269,130 @@ private struct HistoryCard: View {
 
 private struct StatsTab: View {
     let rowsProvider: () -> [TranscriptStore.Row]
+    let analyzeStyle: (String) async -> String?
     @State private var rows: [TranscriptStore.Row] = []
+    @State private var analysis: String?
+    @State private var analyzing = false
 
     var body: some View {
-        StatsView(summary: StatsSummary.compute(from: rows), rows: rows)
-            .navigationTitle("Stats")
-            .onAppear { rows = rowsProvider() }
+        VStack(spacing: 0) {
+            StatsView(summary: StatsSummary.compute(from: rows), rows: rows)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Button {
+                        runAnalysis()
+                    } label: {
+                        Label(analyzing ? "Analyzing…" : "Analyze my style", systemImage: "wand.and.stars")
+                    }
+                    .disabled(analyzing || rows.count < 5)
+                    if rows.count < 5 {
+                        Text("Needs at least 5 dictations.").font(.caption).foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                }
+                if let analysis {
+                    ScrollView {
+                        Text(analysis)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 160)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(.quaternary.opacity(0.35)))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+        .navigationTitle("Stats")
+        .onAppear { rows = rowsProvider() }
+    }
+
+    private func runAnalysis() {
+        analyzing = true
+        let sample = rows.suffix(40).map(\.raw).joined(separator: "\n").suffix(6000)
+        Task {
+            let result = await analyzeStyle(String(sample))
+            await MainActor.run {
+                analysis = result ?? "Analysis needs a cleanup engine (Apple Intelligence or the Qwen tier)."
+                analyzing = false
+            }
+        }
+    }
+}
+
+// MARK: - Commands
+
+private struct CommandsView: View {
+    let store: CommandStore
+    @State private var items: [VoiceCommand] = []
+    @State private var loaded = false
+    @State private var saveTask: Task<Void, Never>?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Hold **Fn + Shift** and speak to edit text instead of dictating: the command runs on your selected text, or on your last dictation.")
+                        .font(.callout)
+                    Text("Say a trigger phrase below, or any free-form instruction (“translate this to French”). “Scratch that” deletes the last thing Wisper pasted.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach($items) { $item in
+                        HStack(spacing: 8) {
+                            TextField("trigger phrase…", text: $item.trigger)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 170)
+                            Image(systemName: "arrow.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextField("what to do with the text…", text: $item.prompt)
+                                .textFieldStyle(.roundedBorder)
+                            Button {
+                                items.removeAll { $0.id == item.id }
+                            } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Remove this command")
+                        }
+                    }
+                    Button {
+                        items.append(VoiceCommand(trigger: "", prompt: ""))
+                    } label: {
+                        Label("Add command", systemImage: "plus")
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 9).fill(.quaternary.opacity(0.35)))
+
+                Text("Changes save automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(20)
+        }
+        .navigationTitle("Commands")
+        .onAppear {
+            items = store.commands
+            loaded = true
+        }
+        .onChange(of: items) { _, _ in
+            guard loaded else { return }
+            saveTask?.cancel()
+            saveTask = Task {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run { store.save(items) }
+            }
+        }
     }
 }
 
@@ -456,18 +579,42 @@ private struct SettingsView: View {
     @ObservedObject var appState: AppState
     @AppStorage("cleanupEnabled") private var cleanupEnabled = true
     @AppStorage("preferBuiltInMic") private var preferBuiltInMic = true
+    @AppStorage("out.pasteAutomatically") private var pasteAutomatically = true
+    @AppStorage("out.restoreClipboard") private var restoreClipboard = true
+    @AppStorage("out.capitalizeSentences") private var capitalizeSentences = true
+    @AppStorage("out.tidyPunctuation") private var tidyPunctuation = true
+    @AppStorage("out.removeFillers") private var removeFillers = true
+    @AppStorage("out.spokenFormatting") private var spokenFormatting = true
+    @AppStorage("out.applyCorrections") private var applyCorrections = true
     @State private var startAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         Form {
             Section("Dictation") {
                 Toggle("Clean up text with on-device AI", isOn: $cleanupEnabled)
-                Text("Removes filler words and fixes punctuation. Dictations under 4 words skip cleanup for zero latency. The raw words are always kept in History.")
+                Text("The full cleanup pass. Dictations under 4 words skip it for zero latency. The raw words are always kept in History.")
                     .font(.caption).foregroundStyle(.secondary)
 
                 Toggle("Prefer built-in microphone", isOn: $preferBuiltInMic)
                 Text("Keeps AirPods out of low-quality call mode while you dictate.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Output") {
+                toggleRow("Paste automatically", $pasteAutomatically,
+                          "Paste into whatever has focus. Off: only copy to the clipboard.")
+                toggleRow("Restore my clipboard", $restoreClipboard,
+                          "Put back what was on the clipboard after pasting. Turn off if pastes arrive empty in a particular app.")
+                toggleRow("Capitalize sentences", $capitalizeSentences,
+                          "Start each sentence with a capital letter.")
+                toggleRow("Tidy punctuation", $tidyPunctuation,
+                          "Normalize spacing and add terminal punctuation.")
+                toggleRow("Remove filler words", $removeFillers,
+                          "Drop “um”, “uh” and similar so speech reads like writing.")
+                toggleRow("Spoken formatting", $spokenFormatting,
+                          "Turn “new line” and “new paragraph” into the thing you said.")
+                toggleRow("Apply spoken corrections", $applyCorrections,
+                          "When you correct yourself out loud — “Monday, no wait, Tuesday” — keep only the correction.")
             }
 
             Section("Cleanup engine") {
@@ -521,11 +668,20 @@ private struct SettingsView: View {
             }
 
             Section("How to dictate") {
-                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
+                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. Hold **Fn + Shift** for command mode (see the Commands tab). If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
                     .font(.callout)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
+    }
+
+    private func toggleRow(_ title: String, _ binding: Binding<Bool>, _ subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(title, isOn: binding)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 }

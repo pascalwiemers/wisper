@@ -8,19 +8,36 @@ final class IndicatorPanel {
     private var container: NSVisualEffectView?
     private let waveform = WaveformView(frame: NSRect(x: 0, y: 0, width: 120, height: 28))
     private let label = NSTextField(labelWithString: "")
+    private let partialLabel = NSTextField(labelWithString: "")
     private var hideWork: DispatchWorkItem?
+    private var recording = false
 
     private let pillHeight: CGFloat = 36
+    private let partialWidth: CGFloat = 400
 
     // MARK: - Public modes
 
     func showRecording() {
         hideWork?.cancel()
         label.isHidden = true
+        partialLabel.stringValue = ""
+        partialLabel.isHidden = true
         waveform.isHidden = false
         waveform.mode = .live
+        recording = true
         present(width: 148)
         waveform.start()
+    }
+
+    /// Live partial transcript while recording — the pill widens and shows
+    /// the tail of what's been said so far.
+    func setPartial(_ text: String) {
+        guard recording, !text.isEmpty else { return }
+        partialLabel.stringValue = text
+        if partialLabel.isHidden {
+            partialLabel.isHidden = false
+            present(width: partialWidth)
+        }
     }
 
     func setLevel(_ level: Float) {
@@ -29,6 +46,7 @@ final class IndicatorPanel {
 
     func showProcessing() {
         hideWork?.cancel()
+        recording = false
         label.isHidden = true
         waveform.isHidden = false
         waveform.mode = .pulse
@@ -36,8 +54,10 @@ final class IndicatorPanel {
 
     func showMessage(_ message: String, for seconds: TimeInterval = 1.6) {
         hideWork?.cancel()
+        recording = false
         waveform.stop()
         waveform.isHidden = true
+        partialLabel.isHidden = true
         label.stringValue = message
         label.isHidden = false
         label.sizeToFit()
@@ -51,7 +71,9 @@ final class IndicatorPanel {
 
     func hide() {
         hideWork?.cancel()
+        recording = false
         waveform.stop()
+        partialLabel.isHidden = true
         dismiss()
     }
 
@@ -81,8 +103,14 @@ final class IndicatorPanel {
 
             label.font = .systemFont(ofSize: 13, weight: .medium)
             label.textColor = .white
+            partialLabel.font = .systemFont(ofSize: 12)
+            partialLabel.textColor = NSColor.white.withAlphaComponent(0.75)
+            partialLabel.lineBreakMode = .byTruncatingHead
+            partialLabel.maximumNumberOfLines = 1
+            partialLabel.isHidden = true
             container.addSubview(waveform)
             container.addSubview(label)
+            container.addSubview(partialLabel)
             panel.contentView = container
 
             self.panel = panel
@@ -93,12 +121,18 @@ final class IndicatorPanel {
         panel.setContentSize(size)
         container.frame = NSRect(origin: .zero, size: size)
         container.layer?.cornerRadius = pillHeight / 2
-        waveform.frame = NSRect(
-            x: (size.width - waveform.frame.width) / 2,
-            y: (pillHeight - waveform.frame.height) / 2,
-            width: waveform.frame.width,
-            height: waveform.frame.height
-        )
+        if partialLabel.isHidden {
+            waveform.frame = NSRect(
+                x: (size.width - waveform.frame.width) / 2,
+                y: (pillHeight - waveform.frame.height) / 2,
+                width: waveform.frame.width,
+                height: waveform.frame.height
+            )
+        } else {
+            // Waveform shrinks to the left; live text fills the rest.
+            waveform.frame = NSRect(x: 14, y: (pillHeight - 24) / 2, width: 58, height: 24)
+            partialLabel.frame = NSRect(x: 84, y: (pillHeight - 16) / 2, width: size.width - 84 - 16, height: 16)
+        }
 
         if let screen = NSScreen.main {
             let x = screen.visibleFrame.midX - size.width / 2

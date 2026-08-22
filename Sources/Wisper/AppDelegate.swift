@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: TranscriptStore?
     private let indicator = IndicatorPanel()
     private let dictionary = PersonalDictionary()
+    private let commandStore = CommandStore()
     private let appState = AppState()
     private let qwenCleaner = QwenCleaner()
     private var cancellables = Set<AnyCancellable>()
@@ -25,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var escapeMonitors: [Any] = []
     private var maxDurationTimer: Timer?
     private var qwenIdleTimer: Timer?
+    private var partialTimer: Timer?
+    private var partialInFlight = false
+    private var commandMode = false
     private var mainWindow: NSWindow?
 
     private var modelStatusItem: NSMenuItem!
@@ -60,7 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recorder.preferBuiltInMic = preferBuiltInMic
         recorder.onLevel = { [weak self] level in self?.indicator.setLevel(level) }
 
-        hotkey.onFnDown = { [weak self] in self?.startDictation() }
+        hotkey.onFnDown = { [weak self] commandMode in self?.startDictation(commandMode: commandMode) }
+        hotkey.onCommandUpgrade = { [weak self] in
+            if self?.recorder.isRecording == true { self?.commandMode = true }
+        }
         hotkey.onFnUp = { [weak self] in self?.finishDictation() }
         hotkey.start()
 
@@ -263,7 +270,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             selectedTab: tab,
             appState: appState,
             rowsProvider: { [weak self] in self?.store?.allRows() ?? [] },
-            dictionary: dictionary
+            dictionary: dictionary,
+            commandStore: commandStore,
+            analyzeStyle: { [weak self] sample in
+                await self?.transform(
+                    text: sample,
+                    instruction: """
+                    These are raw dictation transcripts from one speaker. Describe their speaking style: tone, sentence structure, recurring habits, filler patterns. Then give three short, concrete suggestions for clearer dictation. Address the speaker as "you". Under 200 words, plain prose.
+                    """
+                )
+            }
         )
 
         if let mainWindow {
@@ -368,8 +384,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Dictation flow
 
-    private func startDictation() {
+    private func startDictation(commandMode: Bool = false) {
         guard modelReady, !isProcessing, !recorder.isRecording else { return }
+        self.commandMode = commandMode
         // Lazy Qwen: start reloading now so it happens while the user speaks.
         if appState.cleanupTier == .best, appState.qwenResidency == .lazyUnload {
             qwenIdleTimer?.invalidate()
@@ -384,12 +401,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             indicator.showRecording()
             playTick(named: "Tink")
             installEscapeMonitors()
+            startPartialTranscripts()
             maxDurationTimer = Timer.scheduledTimer(withTimeInterval: maximumRecordingSeconds, repeats: false) { [weak self] _ in
                 wlog("recording hit \(Int(self?.maximumRecordingSeconds ?? 0))s cap — finishing")
                 self?.finishDictation()
             }
         } catch {
             wlog("could not start recording: \(error)")
+        }
+    }
+
+    /// Live partial transcripts in the pill: re-transcribe the buffer every
+    /// second while recording — Parakeet is fast enough to just redo it.
+    private func startPartialTranscripts() {
+        partialTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self, self.recorder.isRecording, !self.partialInFlight else { return }
+            let samples = self.recorder.snapshotSamples()
+            guard samples.count > 12000 else { return }
+            self.partialInFlight = true
+            Task {
+                if let text = try? await self.transcriber.transcribe(samples) {
+                    await MainActor.run { self.indicator.setPartial(text) }
+                }
+                self.partialInFlight = false
+            }
         }
     }
 
@@ -421,6 +456,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.showProcessing()
         let duration = Double(samples.count) / 16000.0
         let wantCleanup = cleanupEnabled
+        let isCommand = commandMode
+        commandMode = false
+        let options = OutputOptions.current()
 
         Task {
             let asrStart = Date()
@@ -434,6 +472,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.dictionary.reload()
                 raw = self.dictionary.applyReplacements(to: raw)
 
+                if isCommand {
+                    await MainActor.run { self.handleCommand(utterance: raw, options: options) }
+                    return
+                }
+
+                if options.spokenFormatting {
+                    raw = OutputOptions.applySpokenFormatting(to: raw)
+                }
+
                 var cleaned: String? = nil
                 var cleanupMs: Int? = nil
                 if wantCleanup,
@@ -443,12 +490,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                     // Best tier first; falls through to Fast if not ready.
                     if self.appState.cleanupTier == .best {
-                        result = await self.qwenCleaner.clean(raw, vocabulary: self.dictionary.vocabulary)
+                        result = await self.qwenCleaner.clean(raw, vocabulary: self.dictionary.vocabulary, options: options)
                     }
                     if result == nil,
                        #available(macOS 26.0, *),
                        let cleaner = self.cleanerBox as? Cleaner, cleaner.isAvailable {
-                        result = await cleaner.clean(raw, vocabulary: self.dictionary.vocabulary)
+                        result = await cleaner.clean(raw, vocabulary: self.dictionary.vocabulary, options: options)
                     }
 
                     if let result {
@@ -460,7 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let finalCleaned = cleaned
                 let finalCleanupMs = cleanupMs
                 await MainActor.run {
-                    self.handleTranscript(raw: raw, cleaned: finalCleaned, duration: duration, asrMs: asrMs, cleanupMs: finalCleanupMs)
+                    self.handleTranscript(raw: raw, cleaned: finalCleaned, duration: duration, asrMs: asrMs, cleanupMs: finalCleanupMs, options: options)
                 }
             } catch {
                 wlog("transcription failed: \(error)")
@@ -473,7 +520,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func handleTranscript(raw: String, cleaned: String?, duration: Double, asrMs: Int, cleanupMs: Int?) {
+    // MARK: - Command mode (Fn+Shift)
+
+    /// Applies the active cleanup engine as a text transformer.
+    private func transform(text: String, instruction: String) async -> String? {
+        if appState.cleanupTier == .best,
+           let result = await qwenCleaner.transform(text: text, instruction: instruction) {
+            return result
+        }
+        if #available(macOS 26.0, *), let cleaner = cleanerBox as? Cleaner, cleaner.isAvailable {
+            return await cleaner.transform(text: text, instruction: instruction)
+        }
+        return nil
+    }
+
+    private func handleCommand(utterance: String, options: OutputOptions) {
+        let normalized = CommandStore.normalize(utterance)
+        guard !normalized.isEmpty else {
+            isProcessing = false
+            setIcon(state: .idle)
+            indicator.showMessage("Heard nothing")
+            return
+        }
+
+        // "Scratch that": delete the text we just pasted.
+        let scratchPhrases = ["scratch that", "delete that", "undo that", "scratch it"]
+        if scratchPhrases.contains(where: { normalized.contains($0) }) {
+            isProcessing = false
+            setIcon(state: .idle)
+            indicator.showMessage(injector.deleteLastPaste() ? "Deleted" : "Nothing to delete")
+            return
+        }
+
+        // Target: current selection, else the last dictation.
+        let selection = injector.selectedText()
+        guard let target = selection ?? lastTranscript else {
+            isProcessing = false
+            setIcon(state: .idle)
+            indicator.showMessage("Select text first, or dictate something")
+            return
+        }
+
+        let instruction = commandStore.match(utterance)?.prompt ?? utterance
+        wlog("command: \"\(utterance)\" → instruction \"\(instruction)\" on \(selection != nil ? "selection" : "last transcript") (\(target.count) chars)")
+
+        Task {
+            let result = await transform(text: target, instruction: instruction)
+            await MainActor.run {
+                self.isProcessing = false
+                self.setIcon(state: .idle)
+                guard let result else {
+                    self.indicator.showMessage("Command needs a cleanup engine")
+                    return
+                }
+                self.lastTranscript = result
+                // Pasting over a selection replaces it; with no selection the
+                // result lands at the cursor or on the clipboard.
+                if self.injector.deliver(result, options: options) == .clipboard {
+                    self.indicator.showMessage("Copied — paste anywhere")
+                } else {
+                    self.indicator.hide()
+                }
+            }
+        }
+    }
+
+    private func handleTranscript(raw: String, cleaned: String?, duration: Double, asrMs: Int, cleanupMs: Int?, options: OutputOptions) {
         isProcessing = false
         setIcon(state: .idle)
 
@@ -488,7 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pasteLastItem.isEnabled = true
 
         let targetApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let delivery = injector.deliver(finalText)
+        let delivery = injector.deliver(finalText, options: options)
         if delivery == .clipboard {
             indicator.showMessage("Copied — paste anywhere")
         } else {
@@ -514,6 +626,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func tearDownRecordingState() {
         maxDurationTimer?.invalidate()
         maxDurationTimer = nil
+        partialTimer?.invalidate()
+        partialTimer = nil
         removeEscapeMonitors()
     }
 

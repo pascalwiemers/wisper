@@ -115,13 +115,18 @@ The app adapts to the speaker without retraining any model:
 
 Next steps on this arc: ASR-level vocabulary boosting (FluidAudio's CTC keyword spotter + rescorer — needs the parakeet-ctc-110m model and the SlidingWindow manager); a style profile distilled from accumulated raw/clean pairs and injected into the cleanup prompt; and, as a research item, Apple's Foundation Models LoRA adapter toolkit for true on-device model adaptation.
 
-**Phase 6 — Voice command mode (documented, not committed).**
-Wispr's other half: talking *about* the text instead of producing it. Explicitly out of scope until the core loop is great, but captured here so it's not forgotten:
+**Output toggles (built).** Settings → Output: per-feature switches, each gating a real pipeline stage — Paste automatically, Restore my clipboard, Capitalize sentences, Tidy punctuation, Remove filler words, Spoken formatting ("new line"/"new paragraph"), Apply spoken corrections. Read fresh per dictation.
 
-- *Edit commands:* "delete that", "scratch that, say instead…", "make it more formal / shorter", "turn this into bullet points" — applied to the last dictation or, via AX, to selected text in the focused app.
-- *Intent routing:* the hard problem is deciding whether an utterance is dictation or a command. Likely approach: a separate hotkey (e.g. hold Fn+Shift) for command mode rather than trying to auto-detect intent — auto-detection is where these features get flaky and trust dies.
-- *Rewrite tones/presets:* per-app default styles (Slack casual, email formal, code-comment terse), selectable from the pill while recording.
-- *Selected-text transforms:* select text anywhere, hold the command hotkey, say "translate to German" / "fix grammar" — the LLM rewrites in place via the same paste mechanism.
+**Phase 6 — Voice command mode (v1 built).**
+Hold **Fn+Shift** and speak to edit instead of dictate:
+
+- ✅ *Selected-text transforms:* the command runs on the current selection (AX, with a ⌘C fallback for opaque apps) or the last dictation; the result pastes over the selection.
+- ✅ *Intent routing by hotkey* (no auto-detection): utterances match user-defined trigger phrases, or run verbatim as free-form instructions ("translate this to French").
+- ✅ *Custom commands UI:* Commands tab — trigger → prompt rows, autosaved to commands.json, seeded with fix-grammar / formal / casual / shorter / bullets / translate.
+- ✅ *"Scratch that"* deletes the last paste (synthesized backspaces).
+- Remaining: per-app tone presets; pill differentiation for command mode.
+
+**Phase 5 additions since:** ✅ live partial transcripts in the pill (rolling re-transcription each second — Parakeet is fast enough to redo the whole buffer); ✅ "Analyze my style" LLM deep-dive in Stats. Still open: ASR-level vocabulary boosting (CTC spotter), Whisper fallback for non-European languages, notarization + Sparkle.
 
 ## Quality & distribution
 

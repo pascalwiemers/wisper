@@ -67,6 +67,13 @@ final class AudioRecorder {
         isRecording = true
     }
 
+    /// Copy of the samples captured so far — used for live partial transcripts.
+    func snapshotSamples() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return samples
+    }
+
     func stop() -> [Float] {
         guard isRecording else { return [] }
         engine.inputNode.removeTap(onBus: 0)

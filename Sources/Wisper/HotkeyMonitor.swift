@@ -4,8 +4,11 @@ import AppKit
 /// `.flagsChanged` events, not as a normal keycode, so we track edge transitions.
 /// Requires Accessibility trust to observe events in other apps.
 final class HotkeyMonitor {
-    var onFnDown: (() -> Void)?
+    /// `commandMode` is true when Shift is held with Fn (command mode).
+    var onFnDown: ((_ commandMode: Bool) -> Void)?
     var onFnUp: (() -> Void)?
+    /// Fires if Shift joins while Fn is already held — upgrades to command mode.
+    var onCommandUpgrade: (() -> Void)?
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -30,9 +33,12 @@ final class HotkeyMonitor {
 
     private func handle(_ event: NSEvent) {
         let fn = event.modifierFlags.contains(.function)
+        let shift = event.modifierFlags.contains(.shift)
         if fn && !fnIsDown {
             fnIsDown = true
-            DispatchQueue.main.async { self.onFnDown?() }
+            DispatchQueue.main.async { self.onFnDown?(shift) }
+        } else if fn && fnIsDown && shift {
+            DispatchQueue.main.async { self.onCommandUpgrade?() }
         } else if !fn && fnIsDown {
             fnIsDown = false
             DispatchQueue.main.async { self.onFnUp?() }

@@ -60,26 +60,43 @@ actor QwenCleaner {
     /// Returns cleaned text, or nil if the model isn't loaded or fails —
     /// the caller falls back to the Fast tier. If a load is in flight
     /// (lazy mode), waits for it rather than falling back.
-    func clean(_ raw: String, vocabulary: [String]) async -> String? {
+    func clean(_ raw: String, vocabulary: [String], options: OutputOptions = .allOn) async -> String? {
+        let input = CleanupText.stripLeadingFillers(from: raw, options: options)
+        guard let output = await respond(
+            instructions: CleanupText.instructions(options: options),
+            prompt: CleanupText.prompt(for: input, vocabulary: vocabulary)
+        ) else { return nil }
+        return CleanupText.postprocess(output, input: input, options: options)
+    }
+
+    /// Command mode: apply an instruction to text ("make it more formal").
+    func transform(text: String, instruction: String) async -> String? {
+        let result = await respond(
+            instructions: CleanupText.transformInstructions,
+            prompt: CleanupText.transformPrompt(text: text, instruction: instruction)
+        )?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (result?.isEmpty ?? true) ? nil : result
+    }
+
+    private func respond(instructions: String, prompt: String) async -> String? {
         if container == nil, let loadTask {
             try? await loadTask.value
         }
         guard let container else { return nil }
-        let input = CleanupText.stripLeadingFillers(from: raw)
         do {
             let session = ChatSession(
                 container,
-                instructions: CleanupText.instructions,
+                instructions: instructions,
                 generateParameters: GenerateParameters(temperature: 0.0)
             )
-            var output = try await session.respond(to: CleanupText.prompt(for: input, vocabulary: vocabulary))
+            var output = try await session.respond(to: prompt)
             // Defensive: strip any reasoning block a Qwen variant might emit.
             output = output.replacingOccurrences(
                 of: #"(?s)<think>.*?</think>"#,
                 with: "", options: .regularExpression)
-            return CleanupText.postprocess(output, input: input)
+            return output
         } catch {
-            wlog("qwen: clean failed (\(error))")
+            wlog("qwen: respond failed (\(error))")
             return nil
         }
     }

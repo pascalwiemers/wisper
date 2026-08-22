@@ -22,16 +22,70 @@ final class Injector {
         "dev.warp.Warp",
     ]
 
-    func deliver(_ text: String) -> Delivery {
-        let decision = pasteDecision()
-        if decision.paste {
-            paste(smartSpacingPrefix(for: decision.element) + text)
-            return .pasted
+    /// Character count of the most recent paste, for "scratch that".
+    private(set) var lastPasteLength = 0
+
+    func deliver(_ text: String, options: OutputOptions = .allOn) -> Delivery {
+        if options.pasteAutomatically {
+            let decision = pasteDecision()
+            if decision.paste {
+                let full = smartSpacingPrefix(for: decision.element) + text
+                paste(full, restoreClipboard: options.restoreClipboard)
+                lastPasteLength = full.count
+                return .pasted
+            }
         }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
         return .clipboard
+    }
+
+    // MARK: - Command mode support
+
+    /// The current selection in the frontmost app: Accessibility first,
+    /// then the ⌘C-into-a-scratch-clipboard trick for AX-opaque apps.
+    func selectedText() -> String? {
+        if let element = focusedElement(),
+           let selection = stringAttribute(element, kAXSelectedTextAttribute), !selection.isEmpty {
+            return selection
+        }
+        let pb = NSPasteboard.general
+        let saved = snapshotPasteboard(pb)
+        pb.clearContents()
+        let baseline = pb.changeCount
+        synthesizeKey(CGKeyCode(kVK_ANSI_C), flags: .maskCommand)
+        var copied: String?
+        for _ in 0..<8 {
+            usleep(50_000)
+            if pb.changeCount != baseline {
+                copied = pb.string(forType: .string)
+                break
+            }
+        }
+        pb.clearContents()
+        if !saved.isEmpty { pb.writeObjects(saved) }
+        return (copied?.isEmpty == false) ? copied : nil
+    }
+
+    /// Deletes the most recent paste by sending backspaces ("scratch that").
+    func deleteLastPaste() -> Bool {
+        let count = lastPasteLength
+        guard count > 0, count <= 2000 else { return false }
+        for _ in 0..<count {
+            synthesizeKey(CGKeyCode(kVK_Delete), flags: [])
+            usleep(1500)
+        }
+        lastPasteLength = 0
+        return true
+    }
+
+    private func focusedElement() -> AXUIElement? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focusedRef, CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else { return nil }
+        return (focusedRef as! AXUIElement)
     }
 
     // MARK: - Focus detection
@@ -115,17 +169,18 @@ final class Injector {
 
     // MARK: - Paste
 
-    private func paste(_ text: String) {
+    private func paste(_ text: String, restoreClipboard: Bool) {
         wlog("paste: AXIsProcessTrusted=\(AXIsProcessTrusted()) — posting ⌘V")
         let pb = NSPasteboard.general
-        let savedItems = snapshotPasteboard(pb)
+        let savedItems = restoreClipboard ? snapshotPasteboard(pb) : []
 
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        synthesizeCommandV()
+        synthesizeKey(CGKeyCode(kVK_ANSI_V), flags: .maskCommand)
 
         // Restore the user's previous clipboard once the paste has landed.
+        guard restoreClipboard else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             pb.clearContents()
             if !savedItems.isEmpty {
@@ -146,13 +201,12 @@ final class Injector {
         }
     }
 
-    private func synthesizeCommandV() {
+    private func synthesizeKey(_ key: CGKeyCode, flags: CGEventFlags) {
         let source = CGEventSource(stateID: .combinedSessionState)
-        let vKey = CGKeyCode(kVK_ANSI_V)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false) else { return }
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false) else { return }
+        keyDown.flags = flags
+        keyUp.flags = flags
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
     }
