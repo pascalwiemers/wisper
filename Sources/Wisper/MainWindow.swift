@@ -593,7 +593,7 @@ private struct SkillsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Say a skill's name while dictating — “tdd skill”, “use the code review skill” — and its full text is pasted. Handy for dropping reusable prompts into LLM chats.")
+            Text("Hold **Fn + Control** and say a skill's name — “tdd”, “use the code review skill” — and its full text is pasted. Handy for dropping reusable prompts into LLM chats.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -821,7 +821,7 @@ private struct SettingsView: View {
             }
 
             Section("How to dictate") {
-                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. Hold **Fn + Shift** for command mode (see the Commands tab). If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
+                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. **Fn + Shift** = command mode (Commands tab). **Fn + Control** = paste a skill by name (Skills tab). If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
                     .font(.callout)
             }
         }

@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var qwenIdleTimer: Timer?
     private var partialTimer: Timer?
     private var partialInFlight = false
-    private var commandMode = false
+    private var recordingMode: RecordingMode = .dictation
     private var mainWindow: NSWindow?
 
     private var modelStatusItem: NSMenuItem!
@@ -65,9 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recorder.preferBuiltInMic = preferBuiltInMic
         recorder.onLevel = { [weak self] level in self?.indicator.setLevel(level) }
 
-        hotkey.onFnDown = { [weak self] commandMode in self?.startDictation(commandMode: commandMode) }
-        hotkey.onCommandUpgrade = { [weak self] in
-            if self?.recorder.isRecording == true { self?.commandMode = true }
+        hotkey.onFnDown = { [weak self] mode in self?.startDictation(mode: mode) }
+        hotkey.onModeUpgrade = { [weak self] mode in
+            if self?.recorder.isRecording == true { self?.recordingMode = mode }
         }
         hotkey.onFnUp = { [weak self] in self?.finishDictation() }
         hotkey.start()
@@ -386,9 +386,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Dictation flow
 
-    private func startDictation(commandMode: Bool = false) {
+    private func startDictation(mode: RecordingMode = .dictation) {
         guard modelReady, !isProcessing, !recorder.isRecording else { return }
-        self.commandMode = commandMode
+        self.recordingMode = mode
         // Lazy Qwen: start reloading now so it happens while the user speaks.
         if appState.cleanupTier == .best, appState.qwenResidency == .lazyUnload {
             qwenIdleTimer?.invalidate()
@@ -458,8 +458,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         indicator.showProcessing()
         let duration = Double(samples.count) / 16000.0
         let wantCleanup = cleanupEnabled
-        let isCommand = commandMode
-        commandMode = false
+        let mode = recordingMode
+        recordingMode = .dictation
         let options = OutputOptions.current()
 
         Task {
@@ -474,14 +474,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.dictionary.reload()
                 raw = self.dictionary.applyReplacements(to: raw)
 
-                // Skill invocation: the whole utterance is a skill's name
-                // ("tdd skill") → paste the skill's full text instead.
-                self.skillStore.reload()
-                if let skill = self.skillStore.match(raw) {
+                // Skill mode (Fn+Control): the utterance names a skill whose
+                // full text gets pasted.
+                if mode == .skill {
                     let utterance = raw
+                    self.skillStore.reload()
+                    let skill = self.skillStore.match(utterance)
                     await MainActor.run {
                         self.isProcessing = false
                         self.setIcon(state: .idle)
+                        guard let skill else {
+                            self.indicator.showMessage("No skill named “\(utterance)”")
+                            return
+                        }
                         self.lastTranscript = skill.content
                         self.copyLastItem.isEnabled = true
                         self.pasteLastItem.isEnabled = true
@@ -498,7 +503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
 
-                if isCommand {
+                if mode == .command {
                     await MainActor.run { self.handleCommand(utterance: raw, options: options) }
                     return
                 }

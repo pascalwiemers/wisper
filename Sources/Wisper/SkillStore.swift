@@ -63,13 +63,21 @@ final class SkillStore {
 
     // MARK: - Matching
 
-    /// A dictation invokes a skill when the whole utterance is the skill's
-    /// name, optionally framed: "tdd", "tdd skill", "skill tdd",
-    /// "use the tdd skill", "paste the code review skill".
+    /// Skill mode is an explicit hotkey (Fn+Control), so matching can be
+    /// generous: exact canonical name first ("tdd", "use the tdd skill"),
+    /// then a partial match when it's unambiguous ("diagnosing" →
+    /// "diagnosing bugs").
     func match(_ utterance: String) -> Skill? {
         let spoken = Self.canonical(utterance)
         guard !spoken.isEmpty else { return nil }
-        return skills.first { Self.canonical($0.name) == spoken }
+        if let exact = skills.first(where: { Self.canonical($0.name) == spoken }) {
+            return exact
+        }
+        let partial = skills.filter {
+            let name = Self.canonical($0.name)
+            return name.contains(spoken) || spoken.contains(name)
+        }
+        return partial.count == 1 ? partial.first : nil
     }
 
     static func canonical(_ text: String) -> String {

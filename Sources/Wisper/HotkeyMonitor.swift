@@ -3,12 +3,18 @@ import AppKit
 /// Watches the Fn (globe) modifier globally. Fn arrives as a modifier flag on
 /// `.flagsChanged` events, not as a normal keycode, so we track edge transitions.
 /// Requires Accessibility trust to observe events in other apps.
+/// What a hold of Fn means, decided by the co-held modifier.
+enum RecordingMode {
+    case dictation      // Fn alone
+    case command        // Fn + Shift: transform selected text
+    case skill          // Fn + Control: paste a named skill
+}
+
 final class HotkeyMonitor {
-    /// `commandMode` is true when Shift is held with Fn (command mode).
-    var onFnDown: ((_ commandMode: Bool) -> Void)?
+    var onFnDown: ((RecordingMode) -> Void)?
     var onFnUp: (() -> Void)?
-    /// Fires if Shift joins while Fn is already held — upgrades to command mode.
-    var onCommandUpgrade: (() -> Void)?
+    /// Fires if Shift/Control joins while Fn is already held — upgrades the mode.
+    var onModeUpgrade: ((RecordingMode) -> Void)?
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -34,11 +40,13 @@ final class HotkeyMonitor {
     private func handle(_ event: NSEvent) {
         let fn = event.modifierFlags.contains(.function)
         let shift = event.modifierFlags.contains(.shift)
+        let control = event.modifierFlags.contains(.control)
+        let mode: RecordingMode = control ? .skill : (shift ? .command : .dictation)
         if fn && !fnIsDown {
             fnIsDown = true
-            DispatchQueue.main.async { self.onFnDown?(shift) }
-        } else if fn && fnIsDown && shift {
-            DispatchQueue.main.async { self.onCommandUpgrade?() }
+            DispatchQueue.main.async { self.onFnDown?(mode) }
+        } else if fn && fnIsDown && mode != .dictation {
+            DispatchQueue.main.async { self.onModeUpgrade?(mode) }
         } else if !fn && fnIsDown {
             fnIsDown = false
             DispatchQueue.main.async { self.onFnUp?() }
