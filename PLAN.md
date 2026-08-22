@@ -117,6 +117,8 @@ Next steps on this arc: ASR-level vocabulary boosting (FluidAudio's CTC keyword 
 
 **Output toggles (built).** Settings → Output: per-feature switches, each gating a real pipeline stage — Paste automatically, Restore my clipboard, Capitalize sentences, Tidy punctuation, Remove filler words, Spoken formatting ("new line"/"new paragraph"), Apply spoken corrections. Read fresh per dictation.
 
+**Skills (built).** Named prompt snippets pasted whole when you speak their name ("tdd skill", "use the code review skill") — for dropping reusable prompts into LLM chats. Stored as .md files in App Support/Wisper/Skills; Skills tab with list/editor and a GitHub importer that pulls every SKILL.md from a repo (seeded from mattpocock/skills).
+
 **Phase 6 — Voice command mode (v1 built).**
 Hold **Fn+Shift** and speak to edit instead of dictate:
 

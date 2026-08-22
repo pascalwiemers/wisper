@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let indicator = IndicatorPanel()
     private let dictionary = PersonalDictionary()
     private let commandStore = CommandStore()
+    private let skillStore = SkillStore()
     private let appState = AppState()
     private let qwenCleaner = QwenCleaner()
     private var cancellables = Set<AnyCancellable>()
@@ -272,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rowsProvider: { [weak self] in self?.store?.allRows() ?? [] },
             dictionary: dictionary,
             commandStore: commandStore,
+            skillStore: skillStore,
             analyzeStyle: { [weak self] sample in
                 await self?.transform(
                     text: sample,
@@ -471,6 +473,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // deterministic replacement rules to every transcript.
                 self.dictionary.reload()
                 raw = self.dictionary.applyReplacements(to: raw)
+
+                // Skill invocation: the whole utterance is a skill's name
+                // ("tdd skill") → paste the skill's full text instead.
+                self.skillStore.reload()
+                if let skill = self.skillStore.match(raw) {
+                    let utterance = raw
+                    await MainActor.run {
+                        self.isProcessing = false
+                        self.setIcon(state: .idle)
+                        self.lastTranscript = skill.content
+                        self.copyLastItem.isEnabled = true
+                        self.pasteLastItem.isEnabled = true
+                        let delivery = self.injector.deliver(skill.content, options: options)
+                        self.indicator.showMessage(
+                            delivery == .clipboard ? "Skill “\(skill.name)” copied — paste anywhere" : "Skill “\(skill.name)”"
+                        )
+                        self.store?.save(
+                            raw: utterance, clean: nil, durationSeconds: duration,
+                            appBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                            delivery: "skill", asrMs: asrMs
+                        )
+                    }
+                    return
+                }
 
                 if isCommand {
                     await MainActor.run { self.handleCommand(utterance: raw, options: options) }

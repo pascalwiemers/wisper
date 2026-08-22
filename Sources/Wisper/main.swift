@@ -15,6 +15,26 @@ func runBlockingOnRunLoop(_ work: @escaping @Sendable () async -> Void) {
     }
 }
 
+// Developer test mode: `Wisper --import-skills owner/repo` runs the skill
+// importer and prints what it found, plus a matching self-check.
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--import-skills"),
+   CommandLine.arguments.count > flagIndex + 1 {
+    let repo = CommandLine.arguments[flagIndex + 1]
+    let store = SkillStore()
+    runBlockingOnRunLoop {
+        do {
+            let count = try await store.importFromGitHub(repo: repo)
+            print("imported \(count) skills: \(store.skills.map(\.name).joined(separator: ", "))")
+            if let match = store.match("use the tdd skill") {
+                print("match check: \"use the tdd skill\" → \(match.name) (\(match.content.count) chars)")
+            }
+        } catch {
+            print("import failed: \(error.localizedDescription)")
+        }
+    }
+    exit(0)
+}
+
 // Developer test mode: `Wisper --clean-best "um so uh some raw text"` runs the
 // Qwen "Best" tier (downloading the model if needed) and exits.
 if let flagIndex = CommandLine.arguments.firstIndex(of: "--clean-best"),

@@ -33,6 +33,7 @@ struct MainWindowView: View {
         case stats = "Stats"
         case dictionary = "Dictionary"
         case commands = "Commands"
+        case skills = "Skills"
         case settings = "Settings"
         var id: String { rawValue }
 
@@ -42,6 +43,7 @@ struct MainWindowView: View {
             case .stats: "chart.bar.xaxis"
             case .dictionary: "character.book.closed"
             case .commands: "wand.and.stars"
+            case .skills: "sparkles.rectangle.stack"
             case .settings: "gearshape"
             }
         }
@@ -52,6 +54,7 @@ struct MainWindowView: View {
     let rowsProvider: () -> [TranscriptStore.Row]
     let dictionary: PersonalDictionary
     let commandStore: CommandStore
+    let skillStore: SkillStore
     let analyzeStyle: (String) async -> String?
 
     var body: some View {
@@ -94,6 +97,7 @@ struct MainWindowView: View {
             case .stats: StatsTab(rowsProvider: rowsProvider, analyzeStyle: analyzeStyle)
             case .dictionary: DictionaryView(dictionary: dictionary)
             case .commands: CommandsView(store: commandStore)
+            case .skills: SkillsView(store: skillStore)
             case .settings: SettingsView(appState: appState)
             }
         }
@@ -570,6 +574,145 @@ private struct WordChip: View {
         .padding(.vertical, 4)
         .background(Capsule().fill(.quaternary.opacity(hovering ? 0.7 : 0.5)))
         .onHover { hovering = $0 }
+    }
+}
+
+// MARK: - Skills
+
+private struct SkillsView: View {
+    let store: SkillStore
+
+    @State private var skills: [Skill] = []
+    @State private var selectedName: String?
+    @State private var editorContent = ""
+    @State private var editorName = ""
+    @State private var importRepo = ""
+    @State private var importStatus = ""
+    @State private var importing = false
+    @State private var saveTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Say a skill's name while dictating — “tdd skill”, “use the code review skill” — and its full text is pasted. Handy for dropping reusable prompts into LLM chats.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HSplitView {
+                VStack(spacing: 6) {
+                    List(skills, id: \.name, selection: $selectedName) { skill in
+                        Text(skill.name).tag(skill.name)
+                    }
+                    HStack(spacing: 8) {
+                        Button {
+                            let skill = Skill(name: "new skill \(skills.count + 1)", content: "")
+                            store.save(skill)
+                            refresh(selecting: skill.name)
+                        } label: { Image(systemName: "plus") }
+                        Button {
+                            if let selectedName { store.delete(selectedName) }
+                            refresh(selecting: nil)
+                        } label: { Image(systemName: "minus") }
+                        .disabled(selectedName == nil)
+                        Spacer()
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 4)
+                }
+                .frame(minWidth: 150, maxWidth: 220)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    if selectedName != nil {
+                        TextField("Skill name (what you say)", text: $editorName)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { commitRename() }
+                        TextEditor(text: $editorContent)
+                            .font(.system(.callout, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.35)))
+                    } else {
+                        Spacer()
+                        Text(skills.isEmpty ? "No skills yet — add one, or import a repo below." : "Select a skill to edit it.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                        Spacer()
+                    }
+                }
+                .padding(.leading, 10)
+                .frame(minWidth: 320)
+            }
+
+            HStack(spacing: 8) {
+                TextField("owner/repo or GitHub URL to import (looks for SKILL.md files)", text: $importRepo)
+                    .textFieldStyle(.roundedBorder)
+                Button(importing ? "Importing…" : "Import") { runImport(importRepo) }
+                    .disabled(importing || importRepo.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Import mattpocock/skills") { runImport("mattpocock/skills") }
+                    .disabled(importing)
+            }
+            if !importStatus.isEmpty {
+                Text(importStatus).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .navigationTitle("Skills")
+        .onAppear { refresh(selecting: nil) }
+        .onChange(of: selectedName) { _, newValue in
+            saveTask?.cancel()
+            if let newValue, let skill = skills.first(where: { $0.name == newValue }) {
+                editorName = skill.name
+                editorContent = skill.content
+            }
+        }
+        .onChange(of: editorContent) { _, newValue in
+            guard let selectedName, skills.first(where: { $0.name == selectedName })?.content != newValue else { return }
+            saveTask?.cancel()
+            saveTask = Task {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    store.save(Skill(name: selectedName, content: newValue))
+                    skills = store.skills
+                }
+            }
+        }
+    }
+
+    private func commitRename() {
+        guard let selectedName, editorName != selectedName else { return }
+        store.rename(selectedName, to: editorName)
+        refresh(selecting: editorName)
+    }
+
+    private func refresh(selecting: String?) {
+        store.reload()
+        skills = store.skills
+        selectedName = selecting ?? skills.first?.name
+        if let selectedName, let skill = skills.first(where: { $0.name == selectedName }) {
+            editorName = skill.name
+            editorContent = skill.content
+        }
+    }
+
+    private func runImport(_ repo: String) {
+        importing = true
+        importStatus = "Downloading \(repo)…"
+        Task {
+            do {
+                let count = try await store.importFromGitHub(repo: repo)
+                await MainActor.run {
+                    importStatus = count > 0 ? "Imported \(count) skills." : "No SKILL.md files found in that repo."
+                    importing = false
+                    refresh(selecting: nil)
+                }
+            } catch {
+                await MainActor.run {
+                    importStatus = error.localizedDescription
+                    importing = false
+                }
+            }
+        }
     }
 }
 
