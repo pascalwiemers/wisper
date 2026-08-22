@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Wisper</string>
+    <key>CFBundleDisplayName</key>
+    <string>Wisper</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.pscale.wisper</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleExecutable</key>
+    <string>Wisper</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Wisper records your voice while you hold the Fn key so it can transcribe it to text.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Local-only dictation. No audio or text leaves this Mac.</string>
+</dict>
+</plist>
