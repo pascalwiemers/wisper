@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var partialInFlight = false
     private var recordingMode: RecordingMode = .dictation
     private var mainWindow: NSWindow?
+    private var allowWindowResize = false
 
     private var modelStatusItem: NSMenuItem!
     private var copyLastItem: NSMenuItem!
@@ -293,8 +294,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let window = NSWindow(contentViewController: controller)
             window.title = "Wisper"
             window.setContentSize(NSSize(width: 760, height: 560))
+            window.contentMinSize = NSSize(width: 640, height: 420)
             window.isReleasedWhenClosed = false
             window.center()
+            // Belt and suspenders: the delegate vetoes any resize that isn't
+            // the user dragging (or zooming) — SwiftUI content swaps can
+            // request new sizes, but they never arrive as live resizes.
+            window.delegate = self
             mainWindow = window
         }
         mainWindow?.makeKeyAndOrderFront(nil)
@@ -693,6 +699,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let sound = NSSound(named: name) else { return }
         sound.volume = 0.18
         sound.play()
+    }
+}
+
+extension AppDelegate: NSWindowDelegate {
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        guard sender === mainWindow else { return frameSize }
+        // User drags are live resizes; anything else (SwiftUI content swaps)
+        // keeps the current size unless explicitly allowed (zoom).
+        if sender.inLiveResize || allowWindowResize || !sender.isVisible {
+            return frameSize
+        }
+        return sender.frame.size
+    }
+
+    func windowShouldZoom(_ window: NSWindow, toFrame newFrame: NSRect) -> Bool {
+        allowWindowResize = true
+        DispatchQueue.main.async { self.allowWindowResize = false }
+        return true
     }
 }
 
