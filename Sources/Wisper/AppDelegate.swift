@@ -76,8 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey.onFnDown = { [weak self] mode in self?.startDictation(mode: mode) }
         hotkey.onModeUpgrade = { [weak self] mode in
-            // Option mid-hold must not silently discard a recording.
-            if self?.recorder.isRecording == true, mode != .reclean { self?.recordingMode = mode }
+            if self?.recorder.isRecording == true { self?.recordingMode = mode }
         }
         hotkey.onFnUp = { [weak self] in self?.finishDictation() }
         hotkey.start()
@@ -524,15 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Dictation flow
 
-    private var recleanArmed = false
-
     private func startDictation(mode: RecordingMode = .dictation) {
-        // Fn+Option is a tap, not a hold: no recording, fire on release.
-        if mode == .reclean {
-            guard !recorder.isRecording, !isProcessing else { return }
-            recleanArmed = true
-            return
-        }
         guard modelReady, !isProcessing, !recorder.isRecording else { return }
         self.recordingMode = mode
         // Lazy Qwen: start reloading now so it happens while the user speaks.
@@ -587,11 +578,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func finishDictation() {
-        if recleanArmed {
-            recleanArmed = false
-            runReclean()
-            return
-        }
         guard recorder.isRecording else { return }
         let samples = recorder.stop()
         tearDownRecordingState()
@@ -701,57 +687,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.setIcon(state: .idle)
                     self.indicator.showMessage("Transcription failed")
                 }
-            }
-        }
-    }
-
-    /// Fn+Option: re-clean the most recent dictation with Codex (Luna) and
-    /// replace the pasted text in place. Slow (~8s) but markedly better at
-    /// tangled speech than the local engines — worth it when a dictation
-    /// came out mangled.
-    private func runReclean() {
-        guard !isProcessing else { return }
-        guard let lastRow = store?.allRows().last, injector.lastPasteLength > 0 else {
-            indicator.showMessage("Nothing recent to improve")
-            return
-        }
-        isProcessing = true
-        setIcon(state: .processing)
-        indicator.showProcessing()
-        let options = OutputOptions.current()
-        let raw = lastRow.raw
-        let vocabulary = dictionary.vocabulary
-
-        Task {
-            let prompt = CleanupText.instructions(options: options)
-                + "\n\n" + CleanupText.prompt(for: raw, vocabulary: vocabulary)
-            let response = await CodexAnalyzer.run(prompt: prompt, model: "gpt-5.6-luna")
-            await MainActor.run {
-                self.isProcessing = false
-                self.setIcon(state: .idle)
-                let cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !cleaned.isEmpty, !cleaned.hasPrefix("⚠︎") else {
-                    self.indicator.showMessage(cleaned.isEmpty ? "Codex re-clean failed" : cleaned, for: 3)
-                    wlog("reclean failed: \(cleaned)")
-                    return
-                }
-                let final = CleanupText.postprocess(cleaned, input: raw, options: options)
-                guard final != self.lastTranscript else {
-                    self.indicator.showMessage("Already as good as it gets")
-                    return
-                }
-                guard self.injector.deleteLastPaste() else {
-                    _ = self.injector.deliver(final, options: options)
-                    self.indicator.showMessage("Improved — copied")
-                    return
-                }
-                self.lastTranscript = final
-                if self.injector.deliver(final, options: options) == .clipboard {
-                    self.indicator.showMessage("Improved — copied, paste anywhere")
-                } else {
-                    self.indicator.showMessage("✦ Improved")
-                }
-                wlog("reclean: replaced last paste (\(raw.count) → \(final.count) chars)")
             }
         }
     }

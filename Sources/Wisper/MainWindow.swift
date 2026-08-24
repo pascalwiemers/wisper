@@ -943,7 +943,7 @@ private struct SettingsView: View {
             }
 
             Section("How to dictate") {
-                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. **Fn + Shift** = command mode (Commands tab). **Fn + Control** = paste a skill by name (Skills tab). **Fn + Option (tap)** = re-clean your last dictation with Codex and replace it in place (~8 s, sends that text to your OpenAI subscription). Recordings cap at 5 minutes. If no text field is focused, the text lands on your clipboard. Dictation itself runs entirely on this Mac.")
+                Text("Hold **Fn**, speak, release. **Esc** while holding cancels. **Fn + Shift** = command mode (Commands tab). **Fn + Control** = paste a skill by name (Skills tab). Recordings cap at 5 minutes. If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
                     .font(.callout)
             }
 
