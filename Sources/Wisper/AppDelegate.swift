@@ -36,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var allowWindowResize = false
     private var statusMenu: NSMenu!
     private var pendingMenuOpen: DispatchWorkItem?
+    private var lastStatusClick = Date.distantPast
+    /// Our own double-click gate — tighter and independent of the system's
+    /// (often generous) double-click interval.
+    private let statusDoubleClickWindow: TimeInterval = 0.35
 
     private var modelStatusItem: NSMenuItem!
     private var copyLastItem: NSMenuItem!
@@ -260,14 +264,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showStatusMenu()
             return
         }
-        if event.clickCount >= 2 {
+        let now = Date()
+        let isDoubleClick = now.timeIntervalSince(lastStatusClick) < statusDoubleClickWindow
+        lastStatusClick = now
+
+        if isDoubleClick {
             pendingMenuOpen?.cancel()
             pendingMenuOpen = nil
+            lastStatusClick = .distantPast   // a third click starts fresh
             toggleMainWindow()
         } else {
             let work = DispatchWorkItem { [weak self] in self?.showStatusMenu() }
             pendingMenuOpen = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + statusDoubleClickWindow, execute: work)
         }
     }
 
