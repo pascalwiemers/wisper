@@ -293,6 +293,8 @@ private struct StatsTab: View {
     @State private var rows: [TranscriptStore.Row] = []
     @State private var analysis: String?
     @State private var analyzing = false
+    @State private var wrapped: String?
+    @State private var wrappedRunning = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -306,19 +308,31 @@ private struct StatsTab: View {
                         Label(analyzing ? "Analyzing…" : "Analyze my style", systemImage: "wand.and.stars")
                     }
                     .disabled(analyzing || rows.count < 5)
+
+                    Button {
+                        runWrapped()
+                    } label: {
+                        Label(wrappedRunning ? "Codex is reading…" : "Dictation Wrapped", systemImage: "sparkles")
+                    }
+                    .disabled(wrappedRunning || rows.count < 5)
+
                     if rows.count < 5 {
                         Text("Needs at least 5 dictations.").font(.caption).foregroundStyle(.tertiary)
                     }
                     Spacer()
                 }
-                if let analysis {
+                Text("Analyze runs on-device. Dictation Wrapped sends your raw transcripts to Codex (your OpenAI subscription) for a bigger-model deep dive — takes a minute.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+
+                if let result = wrapped ?? analysis {
                     ScrollView {
-                        Text(analysis)
+                        Text(LocalizedStringKey(result))
                             .font(.callout)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxHeight: 160)
+                    .frame(maxHeight: 220)
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 9).fill(.quaternary.opacity(0.35)))
                 }
@@ -328,6 +342,18 @@ private struct StatsTab: View {
         }
         .navigationTitle("Stats")
         .onAppear { rows = rowsProvider() }
+    }
+
+    private func runWrapped() {
+        wrappedRunning = true
+        let prompt = CodexAnalyzer.wrappedPrompt(rows: rows)
+        Task {
+            let result = await CodexAnalyzer.run(prompt: prompt)
+            await MainActor.run {
+                wrapped = result
+                wrappedRunning = false
+            }
+        }
     }
 
     private func runAnalysis() {
