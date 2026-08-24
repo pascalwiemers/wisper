@@ -34,6 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingMode: RecordingMode = .dictation
     private var mainWindow: NSWindow?
     private var allowWindowResize = false
+    private var statusMenu: NSMenu!
+    private var pendingMenuOpen: DispatchWorkItem?
 
     private var modelStatusItem: NSMenuItem!
     private var copyLastItem: NSMenuItem!
@@ -239,7 +241,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(permsItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Wisper", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem.menu = menu
+        statusMenu = menu
+
+        // No permanent menu: clicks hit our action so double-click can toggle
+        // the window. Single left-click waits one double-click interval, then
+        // shows the menu; right-click shows it immediately.
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(statusItemClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+    }
+
+    @objc private func statusItemClicked() {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            pendingMenuOpen?.cancel()
+            showStatusMenu()
+            return
+        }
+        if event.clickCount >= 2 {
+            pendingMenuOpen?.cancel()
+            pendingMenuOpen = nil
+            toggleMainWindow()
+        } else {
+            let work = DispatchWorkItem { [weak self] in self?.showStatusMenu() }
+            pendingMenuOpen = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+        }
+    }
+
+    private func showStatusMenu() {
+        statusItem.menu = statusMenu
+        statusItem.button?.performClick(nil)
+        // Detach again so the next click reaches our action handler.
+        DispatchQueue.main.async { self.statusItem.menu = nil }
+    }
+
+    private func toggleMainWindow() {
+        if let mainWindow, mainWindow.isVisible {
+            mainWindow.close()
+        } else {
+            openMainWindow(tab: appState.selectedTab)
+        }
     }
 
     private enum IconState { case loading, idle, recording, processing }
