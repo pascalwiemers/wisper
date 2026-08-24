@@ -29,10 +29,12 @@ final class CommandStore {
             .appendingPathComponent("Wisper", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("commands.json")
-        load()
+        reload()
     }
 
-    private func load() {
+    var fileURLForSync: URL { fileURL }
+
+    func reload() {
         if let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([VoiceCommand].self, from: data) {
             commands = decoded

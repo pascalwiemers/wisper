@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
     @Published var qwenResidency = QwenResidency(rawValue: UserDefaults.standard.string(forKey: "qwenResidency") ?? "") ?? .resident
     @Published var qwenIdleMinutes = UserDefaults.standard.object(forKey: "qwenIdleMinutes") as? Int ?? 15
     @Published var selectedTab: MainWindowView.Tab = .history
+    @Published var syncStatus = ""
+    @Published var syncEmail: String?
 }
 
 /// The app's main window: a native sidebar layout. The waveform mark is the
@@ -58,6 +60,9 @@ struct MainWindowView: View {
     let skillStore: SkillStore
     let deleteHistory: () -> Void
     let analyzeStyle: (String) async -> String?
+    let syncSignIn: (String, String, Bool) async -> String?
+    let syncSignOut: () -> Void
+    let syncNow: () -> Void
 
     var body: some View {
         NavigationSplitView {
@@ -101,7 +106,8 @@ struct MainWindowView: View {
                 case .dictionary: DictionaryView(dictionary: dictionary)
                 case .commands: CommandsView(store: commandStore)
                 case .skills: SkillsView(store: skillStore)
-                case .settings: SettingsView(appState: appState, deleteHistory: deleteHistory)
+                case .settings: SettingsView(appState: appState, deleteHistory: deleteHistory,
+                                         syncSignIn: syncSignIn, syncSignOut: syncSignOut, syncNow: syncNow)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -731,6 +737,16 @@ private struct SkillsView: View {
 private struct SettingsView: View {
     @ObservedObject var appState: AppState
     let deleteHistory: () -> Void
+    let syncSignIn: (String, String, Bool) async -> String?
+    let syncSignOut: () -> Void
+    let syncNow: () -> Void
+    @AppStorage("sync.enabled") private var syncEnabled = false
+    @AppStorage("sync.url") private var syncURL = ""
+    @AppStorage("sync.anonKey") private var syncAnonKey = ""
+    @State private var syncEmailField = ""
+    @State private var syncPasswordField = ""
+    @State private var syncBusy = false
+    @State private var syncAuthError = ""
     @AppStorage("cleanupEnabled") private var cleanupEnabled = true
     @AppStorage("preferBuiltInMic") private var preferBuiltInMic = true
     @AppStorage("out.pasteAutomatically") private var pasteAutomatically = true
@@ -859,6 +875,47 @@ private struct SettingsView: View {
                 }
             }
 
+            Section("Sync") {
+                Toggle("Sync via Supabase", isOn: $syncEnabled)
+                Text("Optional. Syncs history, dictionary, commands, and skills to your own Supabase project so other devices (including the Linux app) share them. Off by default — with it off, nothing ever leaves this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                if syncEnabled {
+                    TextField("Project URL", text: $syncURL)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("Anon (publishable) key — Supabase → Settings → API", text: $syncAnonKey)
+                        .textFieldStyle(.roundedBorder)
+
+                    if let email = appState.syncEmail {
+                        HStack {
+                            Text("Signed in as \(email)").font(.callout)
+                            Spacer()
+                            Button("Sync Now") { syncNow() }
+                            Button("Sign Out") { syncSignOut() }
+                        }
+                    } else {
+                        TextField("Email", text: $syncEmailField)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("Password", text: $syncPasswordField)
+                            .textFieldStyle(.roundedBorder)
+                        HStack {
+                            Button(syncBusy ? "Working…" : "Sign In") { authenticate(signUp: false) }
+                                .disabled(syncBusy)
+                            Button("Create Account") { authenticate(signUp: true) }
+                                .disabled(syncBusy)
+                        }
+                        if !syncAuthError.isEmpty {
+                            Text(syncAuthError).font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                    if !appState.syncStatus.isEmpty {
+                        Text(appState.syncStatus).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("First time: run supabase/schema.sql (in the GitHub repo) in your project's SQL editor to create the tables.")
+                        .font(.caption).foregroundStyle(.tertiary)
+                }
+            }
+
             Section("How to dictate") {
                 Text("Hold **Fn**, speak, release. **Esc** while holding cancels. **Fn + Shift** = command mode (Commands tab). **Fn + Control** = paste a skill by name (Skills tab). Recordings cap at 5 minutes. If no text field is focused, the text lands on your clipboard. Everything runs on this Mac — nothing is sent anywhere.")
                     .font(.callout)
@@ -883,6 +940,21 @@ private struct SettingsView: View {
         .onAppear {
             micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             axTrusted = AXIsProcessTrusted()
+        }
+    }
+
+    private func authenticate(signUp: Bool) {
+        syncBusy = true
+        syncAuthError = ""
+        let email = syncEmailField
+        let password = syncPasswordField
+        Task {
+            let error = await syncSignIn(email, password, signUp)
+            await MainActor.run {
+                syncAuthError = error ?? ""
+                syncBusy = false
+                if error == nil { syncPasswordField = "" }
+            }
         }
     }
 

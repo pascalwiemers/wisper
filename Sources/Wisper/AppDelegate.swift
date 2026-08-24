@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dictionary = PersonalDictionary()
     private let commandStore = CommandStore()
     private let skillStore = SkillStore()
+    private let syncEngine = SupabaseSync()
+    private var syncSoonTimer: Timer?
     private let appState = AppState()
     private let qwenCleaner = QwenCleaner()
     private var cancellables = Set<AnyCancellable>()
@@ -120,6 +122,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let rows = store.allRows()
             let dictionary = dictionary
             Task.detached(priority: .background) { dictionary.learn(from: rows) }
+        }
+
+        // Sync: seed the project URL once, surface sign-in state, first sync.
+        if UserDefaults.standard.string(forKey: "sync.url")?.isEmpty != false {
+            UserDefaults.standard.set("https://noloqprznwrdtvctrsvp.supabase.co", forKey: "sync.url")
+        }
+        Task {
+            let email = await syncEngine.signedInEmail
+            await MainActor.run { self.appState.syncEmail = email }
+            if UserDefaults.standard.bool(forKey: "sync.enabled"), email != nil {
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                await self.runSync()
+            }
+        }
+    }
+
+    // MARK: - Sync
+
+    private func runSync() async {
+        guard UserDefaults.standard.bool(forKey: "sync.enabled"),
+              await syncEngine.signedInEmail != nil,
+              let store else { return }
+        await MainActor.run { self.appState.syncStatus = "Syncing…" }
+        do {
+            let summary = try await syncEngine.syncNow(
+                store: store,
+                dictionaryURL: dictionary.fileURLForEditing,
+                commandsURL: commandStore.fileURLForSync,
+                skillsDir: skillStore.directoryURL
+            )
+            // Pulled documents may have changed files on disk.
+            dictionary.reload()
+            commandStore.reload()
+            skillStore.reload()
+            let stamp = Date().formatted(date: .omitted, time: .shortened)
+            await MainActor.run { self.appState.syncStatus = "Synced \(stamp) — \(summary)" }
+            wlog("sync: \(summary)")
+        } catch {
+            await MainActor.run { self.appState.syncStatus = "Sync failed: \(error.localizedDescription)" }
+            wlog("sync failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Debounced sync shortly after activity (a dictation, an edit).
+    private func scheduleSyncSoon() {
+        guard UserDefaults.standard.bool(forKey: "sync.enabled") else { return }
+        syncSoonTimer?.invalidate()
+        syncSoonTimer = Timer.scheduledTimer(withTimeInterval: 45, repeats: false) { [weak self] _ in
+            Task { await self?.runSync() }
         }
     }
 
@@ -285,6 +336,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         These are raw dictation transcripts from one speaker. Describe their speaking style: tone, sentence structure, recurring habits, filler patterns. Then give three short, concrete suggestions for clearer dictation. Address the speaker as "you". Under 200 words, plain prose.
                         """
                     )
+                },
+                syncSignIn: { [weak self] email, password, signUp in
+                    guard let self else { return "App is shutting down" }
+                    do {
+                        try await self.syncEngine.signIn(email: email, password: password, signUp: signUp)
+                        let signedIn = await self.syncEngine.signedInEmail
+                        await MainActor.run { self.appState.syncEmail = signedIn }
+                        Task { await self.runSync() }
+                        return nil
+                    } catch {
+                        return error.localizedDescription
+                    }
+                },
+                syncSignOut: { [weak self] in
+                    guard let self else { return }
+                    Task {
+                        await self.syncEngine.signOut()
+                        await MainActor.run { self.appState.syncEmail = nil; self.appState.syncStatus = "" }
+                    }
+                },
+                syncNow: { [weak self] in
+                    Task { await self?.runSync() }
                 }
             )
             let controller = NSHostingController(rootView: view)
@@ -666,6 +739,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Lazy Qwen: the idle countdown starts after each dictation.
         scheduleQwenIdleUnload()
+        scheduleSyncSoon()
     }
 
     // MARK: - Recording helpers
