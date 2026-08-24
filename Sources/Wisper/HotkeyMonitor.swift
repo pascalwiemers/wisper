@@ -8,6 +8,7 @@ enum RecordingMode {
     case dictation      // Fn alone
     case command        // Fn + Shift: transform selected text
     case skill          // Fn + Control: paste a named skill
+    case reclean        // Fn + Option: re-clean the last paste via Codex (no recording)
 }
 
 final class HotkeyMonitor {
@@ -41,7 +42,8 @@ final class HotkeyMonitor {
         let fn = event.modifierFlags.contains(.function)
         let shift = event.modifierFlags.contains(.shift)
         let control = event.modifierFlags.contains(.control)
-        let mode: RecordingMode = control ? .skill : (shift ? .command : .dictation)
+        let option = event.modifierFlags.contains(.option)
+        let mode: RecordingMode = control ? .skill : (shift ? .command : (option ? .reclean : .dictation))
         if fn && !fnIsDown {
             fnIsDown = true
             DispatchQueue.main.async { self.onFnDown?(mode) }

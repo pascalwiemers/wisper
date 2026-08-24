@@ -35,10 +35,11 @@ enum CodexAnalyzer {
         """
     }
 
-    /// Runs `codex exec` and returns the final message, or an error string.
-    static func run(prompt: String) async -> String {
+    /// Runs `codex exec` and returns the final message, or an error string
+    /// (prefixed "⚠︎" so callers can tell failure from content).
+    static func run(prompt: String, model: String? = nil) async -> String {
         guard let binary = findBinary() else {
-            return "Codex CLI not found — install it (brew install codex) and sign in first."
+            return "⚠︎ Codex CLI not found — install it (brew install codex) and sign in first."
         }
         let outFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("wisper-codex-\(UUID().uuidString).md")
@@ -47,7 +48,10 @@ enum CodexAnalyzer {
         return await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: binary)
-            process.arguments = ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-o", outFile.path, "-"]
+            var arguments = ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-o", outFile.path]
+            if let model { arguments += ["-m", model] }
+            arguments.append("-")
+            process.arguments = arguments
             process.currentDirectoryURL = FileManager.default.temporaryDirectory
             let stdin = Pipe()
             process.standardInput = stdin
@@ -64,7 +68,7 @@ enum CodexAnalyzer {
                 if let result, !result.isEmpty {
                     continuation.resume(returning: result)
                 } else {
-                    continuation.resume(returning: "Codex returned nothing — is the CLI signed in? Try `codex exec \"hi\"` in a terminal.")
+                    continuation.resume(returning: "⚠︎ Codex returned nothing — is the CLI signed in? Try `codex exec \"hi\"` in a terminal.")
                 }
             }
             do {
@@ -73,7 +77,7 @@ enum CodexAnalyzer {
                 stdin.fileHandleForWriting.closeFile()
             } catch {
                 timeout.cancel()
-                continuation.resume(returning: "Could not launch Codex: \(error.localizedDescription)")
+                continuation.resume(returning: "⚠︎ Could not launch Codex: \(error.localizedDescription)")
             }
         }
     }

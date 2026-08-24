@@ -41,6 +41,9 @@ final class IndicatorPanel {
             partialLabel.stringValue = "✦ Skill — say a skill's name"
             partialLabel.isHidden = false
             present(width: partialWidth)
+        case .reclean:
+            // Not a recording mode; never presented.
+            break
         }
         waveform.start()
     }
