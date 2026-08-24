@@ -149,7 +149,9 @@ actor SupabaseSync {
         guard !rows.isEmpty else { return 0 }
         let payload: [[String: Any]] = rows.compactMap { row in
             guard let uuid = row.uuid else { return nil }
-            var object: [String: Any] = [
+            // PostgREST bulk inserts require identical keys on every object,
+            // so optional fields are sent as explicit nulls.
+            let object: [String: Any] = [
                 "id": uuid,
                 "device": deviceName,
                 "ts": ISO8601DateFormatter.sync.string(from: row.timestamp),
@@ -157,11 +159,11 @@ actor SupabaseSync {
                 "duration_s": row.durationSeconds,
                 "word_count": row.wordCount,
                 "delivery": row.delivery,
+                "clean": row.clean ?? NSNull(),
+                "app_bundle": row.appBundleID ?? NSNull(),
+                "asr_ms": row.asrMs ?? NSNull(),
+                "cleanup_ms": row.cleanupMs ?? NSNull(),
             ]
-            object["clean"] = row.clean
-            object["app_bundle"] = row.appBundleID
-            object["asr_ms"] = row.asrMs
-            object["cleanup_ms"] = row.cleanupMs
             return object
         }
         _ = try await rest("transcripts?on_conflict=id", method: "POST",
