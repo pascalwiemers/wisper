@@ -83,13 +83,27 @@ actor QwenCleaner {
             try? await loadTask.value
         }
         guard let container else { return nil }
+
+        // Runaway protection: a derailed generation once pinned the GPU at
+        // 100% for minutes and queued every following dictation behind it.
+        // Cap output tokens (cleanup output ≈ input size) and hard-stop via
+        // cancellation after 30s — the MLX generate loop honors Task.isCancelled.
+        var parameters = GenerateParameters(temperature: 0.0)
+        parameters.maxTokens = max(256, min(1500, prompt.count / 3))
+
+        let generation = Task {
+            let session = ChatSession(container, instructions: instructions, generateParameters: parameters)
+            return try await session.respond(to: prompt)
+        }
+        let watchdog = Task {
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+            generation.cancel()
+            wlog("qwen: generation timed out after 30s — cancelled")
+        }
+        defer { watchdog.cancel() }
+
         do {
-            let session = ChatSession(
-                container,
-                instructions: instructions,
-                generateParameters: GenerateParameters(temperature: 0.0)
-            )
-            var output = try await session.respond(to: prompt)
+            var output = try await generation.value
             // Defensive: strip any reasoning block a Qwen variant might emit.
             output = output.replacingOccurrences(
                 of: #"(?s)<think>.*?</think>"#,
