@@ -11,16 +11,23 @@ enum Delivery: String {
 /// one, otherwise leaves the text on the clipboard.
 final class Injector {
     /// Apps that accept ⌘V into their main view but are invisible or
-    /// unreliable through the Accessibility API — mostly terminals.
-    private let alwaysPasteBundleIDs: Set<String> = [
-        "com.mitchellh.ghostty",
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-        "net.kovidgoyal.kitty",
-        "org.alacritty",
-        "com.github.wez.wezterm",
-        "dev.warp.Warp",
-    ]
+    /// unreliable through the Accessibility API — terminals and some
+    /// Electron apps. Extend without rebuilding via:
+    ///   defaults write com.pscale.wisper extraPasteApps -array-add "com.example.app"
+    private var alwaysPasteBundleIDs: Set<String> {
+        let builtIn: Set<String> = [
+            "com.mitchellh.ghostty",
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "net.kovidgoyal.kitty",
+            "org.alacritty",
+            "com.github.wez.wezterm",
+            "dev.warp.Warp",
+            "com.openai.codex",
+        ]
+        let extra = UserDefaults.standard.stringArray(forKey: "extraPasteApps") ?? []
+        return builtIn.union(extra)
+    }
 
     /// Character count of the most recent paste, for "scratch that".
     private(set) var lastPasteLength = 0
