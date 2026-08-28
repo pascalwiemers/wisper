@@ -15,6 +15,28 @@ func runBlockingOnRunLoop(_ work: @escaping @Sendable () async -> Void) {
     }
 }
 
+// Developer test mode: `Wisper --mic-test [seconds]` records and reports the
+// signal peak plus the device actually used — for diagnosing silent-mic bugs.
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--mic-test") {
+    let seconds = CommandLine.arguments.count > flagIndex + 1 ? Double(CommandLine.arguments[flagIndex + 1]) ?? 2 : 2
+    let recorder = AudioRecorder()
+    recorder.preferBuiltInMic = !CommandLine.arguments.contains("--default-device")
+    recorder.prepare()
+    do {
+        try recorder.start()
+        print("recording \(seconds)s (preferBuiltInMic=\(recorder.preferBuiltInMic))…")
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        let samples = recorder.stop()
+        let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
+        let rms = samples.isEmpty ? 0 : (samples.reduce(Float(0)) { $0 + $1 * $1 } / Float(samples.count)).squareRoot()
+        print("samples: \(samples.count)  peak: \(peak)  rms: \(rms)")
+        print(peak < 0.001 ? "RESULT: SILENT" : "RESULT: SIGNAL OK")
+    } catch {
+        print("start failed: \(error)")
+    }
+    exit(0)
+}
+
 // Developer test mode: `Wisper --import-skills owner/repo` runs the skill
 // importer and prints what it found, plus a matching self-check.
 if let flagIndex = CommandLine.arguments.firstIndex(of: "--import-skills"),

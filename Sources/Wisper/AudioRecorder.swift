@@ -80,6 +80,7 @@ final class AudioRecorder {
             if status != noErr { wlog("recorder: could not select built-in mic (status \(status))") }
         }
         let inputFormat = input.inputFormat(forBus: 0)
+        wlog("recorder: capturing from \(currentDeviceName() ?? "?") @ \(Int(inputFormat.sampleRate))Hz \(inputFormat.channelCount)ch")
         guard inputFormat.sampleRate > 0 else {
             throw NSError(domain: "Wisper", code: 1, userInfo: [NSLocalizedDescriptionKey: "No audio input device"])
         }
@@ -160,6 +161,25 @@ final class AudioRecorder {
             let level = normalized.squareRoot()
             DispatchQueue.main.async { onLevel(level) }
         }
+    }
+
+    /// Name of the device the engine's input unit is actually bound to.
+    private func currentDeviceName() -> String? {
+        guard let unit = engine.inputNode.audioUnit else { return nil }
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                                   kAudioUnitScope_Global, 0, &deviceID, &size) == noErr else { return nil }
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name) == noErr,
+              let name else { return "device \(deviceID)" }
+        return name.takeRetainedValue() as String
     }
 
     /// Finds the built-in microphone's CoreAudio device ID, if present.
