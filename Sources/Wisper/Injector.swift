@@ -34,7 +34,15 @@ final class Injector {
 
     func deliver(_ text: String, options: OutputOptions = .allOn) -> Delivery {
         if options.pasteAutomatically {
-            let decision = pasteDecision()
+            var decision = pasteDecision()
+            // Firefox-family browsers build their accessibility tree lazily:
+            // right after launch the focused element reports as a bare
+            // window/group. The first query wakes the tree — ask again.
+            if !decision.paste, decision.retryable {
+                usleep(250_000)
+                decision = pasteDecision()
+                wlog("inject: retried after AX-tree warmup → \(decision.paste ? "paste" : "clipboard")")
+            }
             if decision.paste {
                 let full = smartSpacingPrefix(for: decision.element) + text
                 paste(full, restoreClipboard: options.restoreClipboard)
@@ -97,7 +105,7 @@ final class Injector {
 
     // MARK: - Focus detection
 
-    private func pasteDecision() -> (paste: Bool, element: AXUIElement?) {
+    private func pasteDecision() -> (paste: Bool, element: AXUIElement?, retryable: Bool) {
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
 
         let systemWide = AXUIElementCreateSystemWide()
@@ -106,7 +114,7 @@ final class Injector {
               let focusedRef, CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else {
             let terminal = alwaysPasteBundleIDs.contains(frontmost)
             wlog("inject: no AX focused element (app=\(frontmost)) → \(terminal ? "paste (terminal allowlist)" : "clipboard")")
-            return (terminal, nil)
+            return (terminal, nil, !terminal)   // no focused element: tree may be warming
         }
         let element = focusedRef as! AXUIElement
 
@@ -116,13 +124,13 @@ final class Injector {
         // Password fields: synthetic paste is blocked / undesirable there.
         if subrole == "AXSecureTextField" {
             wlog("inject: secure text field (app=\(frontmost)) → clipboard")
-            return (false, nil)
+            return (false, nil, false)
         }
 
         let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
         if let role, textRoles.contains(role) {
             wlog("inject: role=\(role) (app=\(frontmost)) → paste")
-            return (true, element)
+            return (true, element, false)
         }
 
         // Web content and custom editors (Electron, browsers) often expose a
@@ -134,18 +142,21 @@ final class Injector {
 
         if hasSelectedRange && (valueSettable.boolValue || role == "AXWebArea") {
             wlog("inject: role=\(role ?? "?") hasRange settable=\(valueSettable.boolValue) (app=\(frontmost)) → paste")
-            return (true, element)
+            return (true, element, false)
         }
 
         // Terminals and other AX-opaque apps: their focused element exposes
         // no text traits, but ⌘V into them is exactly what the user wants.
         if alwaysPasteBundleIDs.contains(frontmost) {
             wlog("inject: role=\(role ?? "?") no text traits, terminal allowlist (app=\(frontmost)) → paste")
-            return (true, nil)
+            return (true, nil, false)
         }
 
         wlog("inject: role=\(role ?? "?") subrole=\(subrole ?? "?") hasRange=\(hasSelectedRange) settable=\(valueSettable.boolValue) (app=\(frontmost)) → clipboard")
-        return (false, nil)
+        // Container roles right after an app launches usually mean the AX
+        // tree hasn't been built yet — worth one retry.
+        let unreadyRoles: Set<String> = ["AXWindow", "AXGroup", "AXBrowser", "AXScrollArea", "AXWebArea"]
+        return (false, nil, role == nil || unreadyRoles.contains(role!))
     }
 
     /// When dictating mid-sentence, add a leading space so pasted text doesn't
