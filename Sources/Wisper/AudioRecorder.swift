@@ -4,7 +4,9 @@ import CoreAudio
 /// Captures microphone input and accumulates 16 kHz mono Float32 samples,
 /// the format Parakeet expects.
 final class AudioRecorder {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
+    private var needsRebuild = false
+    private var configObserver: NSObjectProtocol?
     private var converter: AVAudioConverter?
     private var samples: [Float] = []
     private let lock = NSLock()
@@ -33,10 +35,33 @@ final class AudioRecorder {
     func prepare() {
         _ = engine.inputNode.inputFormat(forBus: 0)
         engine.prepare()
+        // Audio devices coming/going (AirPods, virtual devices like
+        // BlackHole, an iPhone mic) can leave a long-lived engine stale and
+        // silently recording nothing. Rebuild on any configuration change.
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil
+            ) { [weak self] _ in
+                self?.needsRebuild = true
+                wlog("recorder: audio configuration changed — engine will rebuild")
+            }
+        }
+    }
+
+    /// Force a fresh engine on the next recording (e.g. after a silent take).
+    func forceRebuild() {
+        needsRebuild = true
     }
 
     func start() throws {
         guard !isRecording else { return }
+        if needsRebuild {
+            needsRebuild = false
+            engine = AVAudioEngine()
+            _ = engine.inputNode.inputFormat(forBus: 0)
+            engine.prepare()
+            wlog("recorder: engine rebuilt")
+        }
         lock.lock()
         samples.removeAll(keepingCapacity: true)
         lock.unlock()

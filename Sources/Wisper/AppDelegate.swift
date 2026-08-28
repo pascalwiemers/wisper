@@ -590,6 +590,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Silent audio means a broken input path, not quiet speech — the ASR
+        // would hallucinate ("Thank you."). Say so and heal the engine.
+        let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
+        if peak < 0.001 {
+            wlog("recording was silent (peak \(peak)) — rebuilding audio engine")
+            recorder.forceRebuild()
+            setIcon(state: .idle)
+            indicator.showMessage("Mic gave silence — check your input device, then try again", for: 3)
+            return
+        }
+
         playTick(named: "Pop")
         isProcessing = true
         setIcon(state: .processing)
